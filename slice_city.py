@@ -4,6 +4,7 @@ import random
 import os
 import time
 import math
+import asyncio  # Required for pygbag browser compatibility
 
 pygame.init()
 
@@ -54,6 +55,7 @@ TIME_BOOST_GLOW = (100, 255, 255)
 TITLE_SHADOW = (0, 0, 0)
 TITLE_GLOW = (255, 150, 0)
 INTRO_BG_OVERLAY = (0, 0, 50, 180)
+INSTRUCTIONS_BG = (0, 0, 0, 180)
 
 # Extensive font collection for varied text presentation across all screens
 title_font = pygame.font.Font(None, 68)
@@ -64,6 +66,7 @@ font = pygame.font.Font(None, 32)
 small_font = pygame.font.Font(None, 26)
 tiny_font = pygame.font.Font(None, 20)
 micro_font = pygame.font.Font(None, 16)
+prompt_font = pygame.font.Font(None, 52)
 
 # ==========================
 # ASSET LOADING WITH ROBUST ERROR HANDLING AND FALLBACKS
@@ -144,10 +147,10 @@ if main_music_loaded:
     pygame.mixer.music.play(-1)
 
 # ==========================
-# TIME BOOSTERS ON MAP - 2 pickups for +3 seconds each
+# TIME BOOSTERS ON MAP - Only one +3 second booster
 # ==========================
-time_booster_positions = [(4, 8), (14, 6)]
-time_boosters_active = [True, True]
+time_booster_positions = [(10, 8)]
+time_boosters_active = [True]
 
 def draw_time_booster(x, y):
     tx = x * TILE_SIZE
@@ -231,12 +234,15 @@ class GameState:
         self.deliveries_made = 0
         self.extra_time_bought = 0
         self.game_start_time = None
+        self.intro_instructions_expanded = False
+        self.timer_paused = False
+        self.pause_start_time = 0.0
 
     def reset(self):
         global delivered_customers, time_boosters_active, last_encounter_tile, moves_since_encounter
         self.__init__()
         delivered_customers = set()
-        time_boosters_active = [True, True]
+        time_boosters_active = [True]
         last_encounter_tile = None
         moves_since_encounter = 0
         player.x = pizzeria_pos[0] * TILE_SIZE
@@ -280,7 +286,11 @@ def draw_hud():
     if game_state.game_start_time is None:
         return
 
-    elapsed = time.time() - game_state.game_start_time
+    # Calculate remaining time with pause handling
+    if game_state.timer_paused:
+        elapsed = game_state.pause_start_time - game_state.game_start_time
+    else:
+        elapsed = time.time() - game_state.game_start_time
     remaining = max(0, base_time_limit + game_state.extra_time_bought - elapsed)
     mins = int(remaining // 60)
     secs = int(remaining % 60)
@@ -314,7 +324,7 @@ def draw_hud():
         screen.blit(guide, (SCREEN_WIDTH//2 - guide.get_width()//2, SCREEN_HEIGHT - 35))
 
 # ==========================
-# DRAW FUNCTIONS - DETAILED AND POLISHED WITH IMPROVED TITLE SCREEN
+# DRAW FUNCTIONS - DETAILED AND POLISHED WITH PERFECT TITLE SCREEN FIT
 # ==========================
 def draw_intro():
     screen.fill(DARK_BLUE)
@@ -345,41 +355,69 @@ def draw_intro():
     screen.blit(subtitle_shadow, (SCREEN_WIDTH // 2 - subtitle.get_width() // 2 + 3, title_y + 100 + 3))
     screen.blit(subtitle, (SCREEN_WIDTH // 2 - subtitle.get_width() // 2, title_y + 100))
 
-    # Story text with improved spacing and styling - removed "Tough fights = big rewards!"
-    story_lines = [
-        "Night falls over the city...",
-        "The ruthless Pizza Mafia is sabotaging your deliveries",
-        "to steal every last customer!",
-        "",
+    # Always visible short teaser
+    teaser_lines = [
         "20 seconds to deliver 5 unique pizzas",
         "to 5 different customers across the city.",
         "",
-        "Each customer accepts only one delivery.",
-        "Defeat enemies for PEPPERONIS.",
-        "Buy health restore in the SHOP.",
-        "Collect +3 second boosters on the map (2 available)."
+        "Press M for full instructions"
     ]
 
-    y_pos = 220
-    line_height = 34
+    y_pos = 240
+    line_height = 36
 
-    for line in story_lines:
+    for line in teaser_lines:
         if line == "":
             y_pos += line_height // 2
             continue
-        text = font.render(line, True, WHITE)
-        text_shadow = font.render(line, True, BLACK)
+        text = medium_font.render(line, True, WHITE)
+        text_shadow = medium_font.render(line, True, BLACK)
         screen.blit(text_shadow, (SCREEN_WIDTH // 2 - text.get_width() // 2 + 2, y_pos + 2))
         screen.blit(text, (SCREEN_WIDTH // 2 - text.get_width() // 2, y_pos))
         y_pos += line_height
 
-    # Pulsing "Press SPACE" prompt at the very bottom
+    # Expanded instructions (only when toggled)
+    if game_state.intro_instructions_expanded:
+        instructions_overlay = pygame.Surface((SCREEN_WIDTH - 100, SCREEN_HEIGHT - 200))
+        instructions_overlay.set_alpha(200)
+        instructions_overlay.fill(BLACK)
+        screen.blit(instructions_overlay, (50, 100))
+
+        instructions_lines = [
+            "Night falls over the city...",
+            "The ruthless Pizza Mafia is sabotaging your deliveries",
+            "to steal every last customer!",
+            "",
+            "Each customer accepts only one delivery.",
+            "Defeat enemies for PEPPERONIS.",
+            "Buy health restore in the SHOP.",
+            "Collect the +3 second booster on the map (1 available).",
+            "",
+            "Tough fights = big rewards!",
+            "",
+            "Press M again to hide instructions"
+        ]
+
+        instr_y = 130
+        instr_line_height = 32
+
+        for line in instructions_lines:
+            if line == "":
+                instr_y += instr_line_height // 2
+                continue
+            text = small_font.render(line, True, WHITE)
+            text_shadow = small_font.render(line, True, BLACK)
+            screen.blit(text_shadow, (SCREEN_WIDTH // 2 - text.get_width() // 2 + 2, instr_y + 2))
+            screen.blit(text, (SCREEN_WIDTH // 2 - text.get_width() // 2, instr_y))
+            instr_y += instr_line_height
+
+    # Pulsing "Press SPACE" prompt at bottom
     pulse = 127 + int(128 * math.sin(pygame.time.get_ticks() / 300))
     prompt_color = (pulse, pulse, 255)
-    prompt = big_font.render("PRESS SPACE TO START", True, prompt_color)
-    prompt_shadow = big_font.render("PRESS SPACE TO START", True, BLACK)
-    prompt_y = SCREEN_HEIGHT - 80
-    screen.blit(prompt_shadow, (SCREEN_WIDTH // 2 - prompt.get_width() // 2 + 3, prompt_y + 3))
+    prompt = prompt_font.render("PRESS SPACE TO START", True, prompt_color)
+    prompt_shadow = prompt_font.render("PRESS SPACE TO START", True, BLACK)
+    prompt_y = SCREEN_HEIGHT - 100
+    screen.blit(prompt_shadow, (SCREEN_WIDTH // 2 - prompt.get_width() // 2 + 4, prompt_y + 4))
     screen.blit(prompt, (SCREEN_WIDTH // 2 - prompt.get_width() // 2, prompt_y))
 
 def draw_overworld():
@@ -526,7 +564,6 @@ def draw_victory():
     restart = font.render("Press R to Rush Again", True, WHITE)
     screen.blit(restart, (SCREEN_WIDTH // 2 - restart.get_width() // 2, 400))
 
-    # Play victory music - stops main music
     if victory_music_loaded:
         pygame.mixer.music.load(victory_music_path)
         pygame.mixer.music.set_volume(0.6)
@@ -541,152 +578,176 @@ def draw_gameover():
     restart = font.render("Press R to Try Again", True, WHITE)
     screen.blit(restart, (SCREEN_WIDTH // 2 - restart.get_width() // 2, 380))
 
-    # Play loss music - stops main music
     if loss_music_loaded:
         pygame.mixer.music.load(loss_music_path)
         pygame.mixer.music.set_volume(0.5)
         pygame.mixer.music.play()
 
 # ==========================
-# MAIN GAME LOOP - EXTENSIVE EVENT HANDLING
+# MAIN GAME LOOP - WRAPPED IN ASYNC FOR BROWSER COMPATIBILITY
 # ==========================
-running = True
-while running:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
+async def main():
+    global moves_since_encounter, last_encounter_tile
+    running = True
+    current_time = time.time()
 
-        if event.type == pygame.KEYDOWN:
-            # Global shop access
-            if event.key == pygame.K_PERIOD and game_state.state in ("overworld", "combat"):
-                game_state.previous_state = game_state.state
-                game_state.state = "shop"
-                continue
+    while running:
+        current_time = time.time()
 
-            if game_state.state in ("victory", "gameover"):
-                if event.key == pygame.K_r:
-                    game_state.reset()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+            if event.type == pygame.KEYDOWN:
+                # Global shop access - pause timer when opening
+                if event.key == pygame.K_PERIOD and game_state.state in ("overworld", "combat"):
+                    game_state.previous_state = game_state.state
+                    game_state.state = "shop"
+                    game_state.timer_paused = True
+                    game_state.pause_start_time = current_time
                     continue
 
-            if game_state.state == "intro":
-                if event.key == pygame.K_SPACE:
-                    game_state.state = "overworld"
-                    game_state.game_start_time = time.time()
+                # Toggle expanded instructions with M key
+                if event.key == pygame.K_m and game_state.state == "intro":
+                    game_state.intro_instructions_expanded = not game_state.intro_instructions_expanded
+                    continue
 
-            elif game_state.state == "overworld":
-                old_tile_x = player.x // TILE_SIZE
-                old_tile_y = player.y // TILE_SIZE
+                if game_state.state in ("victory", "gameover"):
+                    if event.key == pygame.K_r:
+                        game_state.reset()
+                        continue
 
-                if event.key in (pygame.K_LEFT, pygame.K_a):
-                    player.x -= TILE_SIZE
-                elif event.key in (pygame.K_RIGHT, pygame.K_d):
-                    player.x += TILE_SIZE
-                elif event.key in (pygame.K_UP, pygame.K_w):
-                    player.y -= TILE_SIZE
-                elif event.key in (pygame.K_DOWN, pygame.K_s):
-                    player.y += TILE_SIZE
-
-                player.x = max(0, min(player.x, (MAP_WIDTH - 1) * TILE_SIZE))
-                player.y = max(0, min(player.y, (MAP_HEIGHT - 1) * TILE_SIZE))
-
-                tile_x = player.x // TILE_SIZE
-                tile_y = player.y // TILE_SIZE
-                current_tile = (tile_x, tile_y)
-
-                if (tile_x, tile_y) != (old_tile_x, old_tile_y):
-                    moves_since_encounter += 1
-
-                if game_map[tile_y][tile_x] == 3 and current_tile not in delivered_customers:
-                    game_state.deliveries_made += 1
-                    delivered_customers.add(current_tile)
-                    if deliver_sound:
-                        deliver_sound.play()
-                    if game_state.deliveries_made >= deliveries_needed:
-                        game_state.state = "victory"
-
-                # Time booster pickup
-                for i, (bx, by) in enumerate(time_booster_positions):
-                    if current_tile == (bx, by) and time_boosters_active[i]:
-                        game_state.extra_time_bought += 3
-                        time_boosters_active[i] = False
-                        if time_boost_sound:
-                            time_boost_sound.play()
-                        game_state.shop_message = "Time Booster Collected +3s!"
-                        game_state.shop_message_timer = 120
-
-                if moves_since_encounter >= 3 and random.random() < ENEMY_ENCOUNTER_CHANCE and current_tile not in important_tiles:
-                    key = random.choice(list(enemy_templates.keys()))
-                    game_state.current_enemy = enemy_templates[key].copy()
-                    game_state.current_enemy["max_health"] = game_state.current_enemy["health"]
-                    game_state.current_enemy["flash"] = 0
-                    game_state.state = "combat"
-                    game_state.pizza_projectiles.clear()
-                    last_encounter_tile = current_tile
-                    moves_since_encounter = 0
-
-            elif game_state.state == "combat":
-                if event.key == pygame.K_f:
-                    game_state.pizza_projectiles.append({"pos": [80, 340], "vel": 32})
-                    if throw_sound:
-                        throw_sound.play()
-                elif event.key == pygame.K_r:
-                    if random.random() < 0.7:
-                        if run_sound:
-                            run_sound.play()
+                if game_state.state == "intro":
+                    if event.key == pygame.K_SPACE:
                         game_state.state = "overworld"
-                        game_state.current_enemy = None
+                        game_state.game_start_time = time.time()
+
+                elif game_state.state == "overworld":
+                    old_tile_x = player.x // TILE_SIZE
+                    old_tile_y = player.y // TILE_SIZE
+
+                    if event.key in (pygame.K_LEFT, pygame.K_a):
+                        player.x -= TILE_SIZE
+                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                        player.x += TILE_SIZE
+                    elif event.key in (pygame.K_UP, pygame.K_w):
+                        player.y -= TILE_SIZE
+                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        player.y += TILE_SIZE
+
+                    player.x = max(0, min(player.x, (MAP_WIDTH - 1) * TILE_SIZE))
+                    player.y = max(0, min(player.y, (MAP_HEIGHT - 1) * TILE_SIZE))
+
+                    tile_x = player.x // TILE_SIZE
+                    tile_y = player.y // TILE_SIZE
+                    current_tile = (tile_x, tile_y)
+
+                    if (tile_x, tile_y) != (old_tile_x, old_tile_y):
+                        moves_since_encounter += 1
+
+                    if game_map[tile_y][tile_x] == 3 and current_tile not in delivered_customers:
+                        game_state.deliveries_made += 1
+                        delivered_customers.add(current_tile)
+                        if deliver_sound:
+                            deliver_sound.play()
+                        if game_state.deliveries_made >= deliveries_needed:
+                            game_state.state = "victory"
+
+                    # Time booster pickup
+                    for i, (bx, by) in enumerate(time_booster_positions):
+                        if current_tile == (bx, by) and time_boosters_active[i]:
+                            game_state.extra_time_bought += 3
+                            time_boosters_active[i] = False
+                            if time_boost_sound:
+                                time_boost_sound.play()
+                            game_state.shop_message = "Time Booster Collected +3s!"
+                            game_state.shop_message_timer = 120
+
+                    if moves_since_encounter >= 3 and random.random() < ENEMY_ENCOUNTER_CHANCE and current_tile not in important_tiles:
+                        key = random.choice(list(enemy_templates.keys()))
+                        game_state.current_enemy = enemy_templates[key].copy()
+                        game_state.current_enemy["max_health"] = game_state.current_enemy["health"]
+                        game_state.current_enemy["flash"] = 0
+                        game_state.state = "combat"
                         game_state.pizza_projectiles.clear()
+                        last_encounter_tile = current_tile
                         moves_since_encounter = 0
 
-            elif game_state.state == "shop":
-                if event.key == pygame.K_SPACE and player.pepperonis >= health_replenish_cost:
-                    player.pepperonis -= health_replenish_cost
-                    player.health = player.max_health
-                    game_state.shop_message = "Health Fully Restored!"
-                    game_state.shop_message_timer = 120
-                    if buy_sound:
-                        buy_sound.play()
-                elif event.key in (pygame.K_ESCAPE, pygame.K_PERIOD):
-                    game_state.state = game_state.previous_state or "overworld"
+                elif game_state.state == "combat":
+                    if event.key == pygame.K_f:
+                        game_state.pizza_projectiles.append({"pos": [80, 340], "vel": 32})
+                        if throw_sound:
+                            throw_sound.play()
+                    elif event.key == pygame.K_r:
+                        if random.random() < 0.7:
+                            if run_sound:
+                                run_sound.play()
+                            game_state.state = "overworld"
+                            game_state.current_enemy = None
+                            game_state.pizza_projectiles.clear()
+                            moves_since_encounter = 0
 
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if shop_button_hover and game_state.state in ("overworld", "combat"):
-                game_state.previous_state = game_state.state
-                game_state.state = "shop"
+                elif game_state.state == "shop":
+                    if event.key == pygame.K_SPACE and player.pepperonis >= health_replenish_cost:
+                        player.pepperonis -= health_replenish_cost
+                        player.health = player.max_health
+                        game_state.shop_message = "Health Fully Restored!"
+                        game_state.shop_message_timer = 120
+                        if buy_sound:
+                            buy_sound.play()
+                    elif event.key in (pygame.K_ESCAPE, pygame.K_PERIOD):
+                        # Resume timer when leaving shop
+                        if game_state.timer_paused:
+                            pause_duration = current_time - game_state.pause_start_time
+                            game_state.extra_time_bought += pause_duration
+                            game_state.timer_paused = False
+                        game_state.state = game_state.previous_state or "overworld"
 
-    # Timer
-    if game_state.game_start_time and game_state.state in ("overworld", "combat", "shop"):
-        if time.time() - game_state.game_start_time > base_time_limit + game_state.extra_time_bought:
-            game_state.state = "gameover"
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if shop_button_hover and game_state.state in ("overworld", "combat"):
+                    game_state.previous_state = game_state.state
+                    game_state.state = "shop"
+                    game_state.timer_paused = True
+                    game_state.pause_start_time = current_time
 
-    # Enemy attack
-    if game_state.state == "combat" and random.random() < 0.035 and not game_state.pizza_projectiles:
-        dmg = game_state.current_enemy["attack"]
-        player.health -= dmg
-        game_state.screen_shake = 30
-        game_state.combat_message = f"-{dmg} HP!"
-        game_state.combat_message_timer = 90
-        if damage_sound:
-            damage_sound.play()
-        if player.health <= 0:
-            game_state.state = "gameover"
+        # Timer - only runs in overworld and combat
+        if game_state.game_start_time and game_state.state in ("overworld", "combat"):
+            elapsed = time.time() - game_state.game_start_time
+            if elapsed > base_time_limit + game_state.extra_time_bought:
+                game_state.state = "gameover"
 
-    # Draw current state
-    if game_state.state == "intro":
-        draw_intro()
-    elif game_state.state == "overworld":
-        draw_overworld()
-    elif game_state.state == "combat":
-        draw_combat()
-    elif game_state.state == "shop":
-        draw_shop()
-    elif game_state.state == "victory":
-        draw_victory()
-    elif game_state.state == "gameover":
-        draw_gameover()
+        # Enemy attack
+        if game_state.state == "combat" and random.random() < 0.035 and not game_state.pizza_projectiles:
+            dmg = game_state.current_enemy["attack"]
+            player.health -= dmg
+            game_state.screen_shake = 30
+            game_state.combat_message = f"-{dmg} HP!"
+            game_state.combat_message_timer = 90
+            if damage_sound:
+                damage_sound.play()
+            if player.health <= 0:
+                game_state.state = "gameover"
 
-    pygame.display.flip()
-    clock.tick(60)
+        # Draw current state
+        if game_state.state == "intro":
+            draw_intro()
+        elif game_state.state == "overworld":
+            draw_overworld()
+        elif game_state.state == "combat":
+            draw_combat()
+        elif game_state.state == "shop":
+            draw_shop()
+        elif game_state.state == "victory":
+            draw_victory()
+        elif game_state.state == "gameover":
+            draw_gameover()
+
+        pygame.display.flip()
+        clock.tick(60)
+        await asyncio.sleep(0)
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 pygame.quit()
 sys.exit()
