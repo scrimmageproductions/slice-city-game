@@ -8,10 +8,6 @@ import asyncio  # Required for pygbag browser compatibility
 
 pygame.init()
 
-# Advanced audio setup with larger buffer for smoother playback and reduced crackling
-pygame.mixer.pre_init(frequency=44100, size=-16, channels=2, buffer=2048)
-pygame.mixer.init()
-
 # ==========================
 # EXTENSIVE CONSTANTS & GAME SETTINGS - DETAILED AND EXPANDED FOR CLARITY AND FLEXIBILITY
 # ==========================
@@ -72,7 +68,7 @@ prompt_font = pygame.font.Font(None, 52)
 # ASSET LOADING WITH ROBUST ERROR HANDLING AND FALLBACKS
 # ==========================
 def load_image(path, scale=None):
-    full_path = os.path.join("assets", path)
+    full_path = "assets/" + path
     if os.path.exists(full_path):
         try:
             img = pygame.image.load(full_path).convert_alpha()
@@ -85,7 +81,7 @@ def load_image(path, scale=None):
     return None
 
 def load_sound(path, volume=0.7):
-    full_path = os.path.join("assets", path)
+    full_path = "assets/" + path
     if os.path.exists(full_path):
         try:
             sound = pygame.mixer.Sound(full_path)
@@ -122,19 +118,19 @@ enemy_images = {
     "Rat King": load_image("rat_king.png", (220, 220)),
 }
 
-# Sound effects (MP3)
-throw_sound = load_sound("throw.mp3", 0.7)
-hit_sound = load_sound("hit.mp3", 0.8)
-deliver_sound = load_sound("deliver.mp3", 0.9)
-buy_sound = load_sound("buy.mp3", 0.6)
-run_sound = load_sound("run.mp3", 0.7)
-damage_sound = load_sound("damage.mp3", 0.8)
-time_boost_sound = load_sound("time_boost.mp3", 0.8)
+# Sound effects (OGG)
+throw_sound = load_sound("throw.ogg", 0.7)
+hit_sound = load_sound("hit.ogg", 0.8)
+deliver_sound = load_sound("deliver.ogg", 0.9)
+buy_sound = load_sound("buy.ogg", 0.6)
+run_sound = load_sound("run.ogg", 0.7)
+damage_sound = load_sound("damage.ogg", 0.8)
+time_boost_sound = load_sound("time_boost.ogg", 0.8)
 
 # Music files
-main_music_path = os.path.join("assets", "italian_music.mp3")
-victory_music_path = os.path.join("assets", "victory.mp3")
-loss_music_path = os.path.join("assets", "times_up.mp3")
+main_music_path = os.path.join("assets", "italian_music.ogg")
+victory_music_path = os.path.join("assets", "victory.ogg")
+loss_music_path = os.path.join("assets", "times_up.ogg")
 
 main_music_loaded = os.path.exists(main_music_path)
 victory_music_loaded = os.path.exists(victory_music_path)
@@ -239,7 +235,7 @@ class GameState:
         self.pause_start_time = 0.0
 
     def reset(self):
-        global delivered_customers, time_boosters_active, last_encounter_tile, moves_since_encounter
+        global delivered_customers, time_boosters_active, last_encounter_tile, moves_since_encounter, game_map
         self.__init__()
         delivered_customers = set()
         time_boosters_active = [True]
@@ -249,6 +245,17 @@ class GameState:
         player.y = pizzeria_pos[1] * TILE_SIZE
         player.health = 120
         player.pepperonis = 0
+        # Regenerate the game map for a fresh random layout on restart
+        game_map = [[0 for _ in range(MAP_WIDTH)] for _ in range(MAP_HEIGHT)]
+        for y in range(MAP_HEIGHT):
+            for x in range(MAP_WIDTH):
+                if (x, y) in important_tiles or (x, y) in time_booster_positions:
+                    continue
+                if random.random() < 0.45:
+                    game_map[y][x] = 1
+        game_map[pizzeria_pos[1]][pizzeria_pos[0]] = 2
+        for cx, cy in customer_positions:
+            game_map[cy][cx] = 3
         if main_music_loaded:
             pygame.mixer.music.load(main_music_path)
             pygame.mixer.music.set_volume(0.45)
@@ -564,11 +571,6 @@ def draw_victory():
     restart = font.render("Press R to Rush Again", True, WHITE)
     screen.blit(restart, (SCREEN_WIDTH // 2 - restart.get_width() // 2, 400))
 
-    if victory_music_loaded:
-        pygame.mixer.music.load(victory_music_path)
-        pygame.mixer.music.set_volume(0.6)
-        pygame.mixer.music.play()
-
 def draw_gameover():
     screen.fill(BLACK)
     over = title_font.render("YOU GOT WHACKED!", True, DEATH_RED)
@@ -578,16 +580,45 @@ def draw_gameover():
     restart = font.render("Press R to Try Again", True, WHITE)
     screen.blit(restart, (SCREEN_WIDTH // 2 - restart.get_width() // 2, 380))
 
-    if loss_music_loaded:
-        pygame.mixer.music.load(loss_music_path)
-        pygame.mixer.music.set_volume(0.5)
-        pygame.mixer.music.play()
-
 # ==========================
-# MAIN GAME LOOP - WRAPPED IN ASYNC FOR BROWSER COMPATIBILITY
+# MAIN GAME LOOP
 # ==========================
 async def main():
-    global moves_since_encounter, last_encounter_tile
+    global background, player_img, pizza_img, pizzeria_img, shop_img, time_boost_img
+    global enemy_images, throw_sound, hit_sound, deliver_sound, buy_sound, run_sound
+    global damage_sound, time_boost_sound, moves_since_encounter
+
+    # Load all images and sounds inside the async main function
+    background = load_image("nyc_background.png", (SCREEN_WIDTH, SCREEN_HEIGHT))
+    player_img = load_image("chef.png", (TILE_SIZE + 8, TILE_SIZE + 20))
+    pizza_img = load_image("pizza_slice.png", (80, 80))
+    pizzeria_img = load_image("pizzeria.png", (TILE_SIZE*3, TILE_SIZE*3))
+    shop_img = load_image("shop.png", (TILE_SIZE*2, TILE_SIZE*2))
+    time_boost_img = load_image("time_boost.png", (TILE_SIZE, TILE_SIZE))
+
+    enemy_images = {
+        "Street Thug": load_image("thug.png", (180, 180)),
+        "Rival Driver": load_image("delivery_guy.png", (180, 180)),
+        "Gang Enforcer": load_image("gangster.png", (180, 180)),
+        "Rat King": load_image("rat_king.png", (220, 220)),
+    }
+
+    throw_sound = load_sound("throw.ogg", 0.7)
+    hit_sound = load_sound("hit.ogg", 0.8)
+    deliver_sound = load_sound("deliver.ogg", 0.9)
+    buy_sound = load_sound("buy.ogg", 0.6)
+    run_sound = load_sound("run.ogg", 0.7)
+    damage_sound = load_sound("damage.ogg", 0.8)
+    time_boost_sound = load_sound("time_boost.ogg", 0.8)
+
+    # Load and play the main music
+    try:
+        pygame.mixer.music.load("assets/italian_music.ogg")
+        pygame.mixer.music.set_volume(0.45)
+        pygame.mixer.music.play(-1)
+    except pygame.error:
+        print("[WARNING] Could not load/play main music")
+
     running = True
     current_time = time.time()
 
